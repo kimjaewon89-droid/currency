@@ -12,7 +12,7 @@ def fetch_and_update_db():
     end_date = datetime.today()
     start_date = end_date - timedelta(days=365)
     
-    # --- Part A: 연준 유동성 데이터 (FRED) ---
+    # --- Part A: FRED 데이터 (자정 기준) ---
     fred_tickers = {'Total_Assets': 'WALCL', 'TGA': 'WDTGAL', 'Reverse_Repo': 'RRPONTSYD'}
     fred_list = []
     
@@ -20,8 +20,8 @@ def fetch_and_update_db():
         try:
             series = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
             df = pd.DataFrame(series, columns=[name])
-            # 시간대(Timezone) 제거하여 기준 통일
-            df.index = pd.to_datetime(df.index).tz_localize(None) 
+            # 핵심 수정 1: 모든 날짜를 자정(00:00:00) 기준으로 강제 통일
+            df.index = pd.to_datetime(df.index).normalize() 
             fred_list.append(df)
         except Exception as e:
             print(f"FRED Error ({name}): {e}")
@@ -31,26 +31,34 @@ def fetch_and_update_db():
         return
 
     liq_df = pd.concat(fred_list, axis=1)
+    liq_df = liq_df[~liq_df.index.duplicated(keep='last')] # 중복 날짜 제거
 
-    # --- Part B: 주가 및 VIX 데이터 (yfinance 개선판) ---
+    # --- Part B: yfinance 데이터 (오후 4시 -> 자정 통일) ---
     try:
-        # yfinance의 최신 Ticker 객체를 사용하여 안전하게 수집
-        sp_data = yf.Ticker("^GSPC").history(start=start_date, end=end_date)
-        vix_data = yf.Ticker("^VIX").history(start=start_date, end=end_date)
+        # download 방식을 사용하여 가장 안정적으로 데이터를 가져옵니다.
+        sp_data = yf.download("^GSPC", start=start_date, end=end_date)
+        vix_data = yf.download("^VIX", start=start_date, end=end_date)
         
+        # yfinance 최신 버전의 MultiIndex 열 구조 방어
+        sp_close = sp_data['Close'].squeeze() if isinstance(sp_data.columns, pd.MultiIndex) else sp_data['Close']
+        vix_close = vix_data['Close'].squeeze() if isinstance(vix_data.columns, pd.MultiIndex) else vix_data['Close']
+
         market_data = pd.DataFrame({
-            'SP500': sp_data['Close'], 
-            'VIX': vix_data['Close']
+            'SP500': sp_close, 
+            'VIX': vix_close
         })
-        market_data.index = market_data.index.tz_localize(None)
+        
+        # 핵심 수정 2: 타임존과 시간을 모두 날려버리고 FRED와 똑같은 날짜 형태로 맞춤
+        market_data.index = pd.to_datetime(market_data.index).tz_localize(None).normalize()
+        market_data = market_data[~market_data.index.duplicated(keep='last')]
+        
     except Exception as e:
         print(f"YFinance Error: {e}")
         market_data = pd.DataFrame(columns=['SP500', 'VIX'])
 
-    # --- Part C: 병합 및 결측치(빈칸) 철통 방어 ---
-    final_new_df = liq_df.join(market_data, how='left')
-    
-    # 주말 빈칸은 금요일 값으로(ffill), 1년 전 첫날 빈칸은 월요일 값으로(bfill) 채움
+    # --- Part C: 완벽한 병합 (Outer Join) ---
+    # 교집합이 아닌 합집합으로 묶어, 휴일/주말 누락을 방지합니다.
+    final_new_df = liq_df.join(market_data, how='outer')
     final_new_df = final_new_df.ffill().bfill()
     final_new_df.index.name = 'Date'
     final_new_df = final_new_df.reset_index()
@@ -59,10 +67,9 @@ def fetch_and_update_db():
     missing = [col for col in required if col not in final_new_df.columns]
     
     if missing:
-        print(f"🚨 필수 데이터 누락으로 인한 계산 중단: {missing}")
+        print(f"🚨 데이터 누락 발생: {missing}")
         return
 
-    # 실질 유동성 최종 계산
     final_new_df['Net_Liquidity'] = final_new_df['Total_Assets'] - (final_new_df['TGA'] + final_new_df['Reverse_Repo'])
 
     # --- Part D: DB 저장 ---
@@ -76,9 +83,9 @@ def fetch_and_update_db():
         
     final_df = final_df.sort_values('Date')
     final_df.to_csv(db_path, index=False)
-    print(f"✅ DB 업데이트 완벽 성공! ({len(final_df)}행)")
+    print(f"✅ DB 업데이트 완료! S&P 500 포함 데이터수: ({len(final_df)}행)")
 
-    # 텔레그램 알림 로직 (기존 설정 유지)
+    # 텔레그램 알림 기능
     bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
     if bot_token and chat_id and len(final_df) >= 2:
