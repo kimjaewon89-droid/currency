@@ -1,1 +1,35 @@
 
+name: Daily Liquidity Update
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 매일 한국 시간 오전 9시 실행
+  workflow_dispatch: # 수동 실행 버튼 활성화
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python main.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name 'Captain-Bot'
+          git config --global user.email 'bot@github.com'
+          git add liquidity_db.csv liquidity_chart.png
+          git commit -m "Update Liquidity Data: $(date +'%Y-%m-%d')" || exit 0
+          git push
