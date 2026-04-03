@@ -32,4 +32,5 @@ jobs:
           git config --global user.email 'bot@github.com'
           git add liquidity_db.csv liquidity_chart.png
           git commit -m "Update Liquidity Data: $(date +'%Y-%m-%d')" || exit 0
+          git pull --rebase origin main
           git push
