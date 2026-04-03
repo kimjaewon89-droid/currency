@@ -1,0 +1,5 @@
+fredapi
+pandas
+matplotlib
+plotly
+streamlit
