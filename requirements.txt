@@ -1,6 +1,7 @@
-fredapi==0.5.1
-pandas==2.0.3
-yfinance==0.2.50
-requests==2.31.0
-matplotlib==3.7.2
+numpy
+pandas
+fredapi
+yfinance
+requests
+matplotlib
 lxml
