@@ -8,16 +8,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 2026년 최신 노드 버전 강제 활성화
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # 최신 환경 강제 적용
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # v3에서 v4로 업데이트
+        uses: actions/checkout@v4 # 최신 v4 사용
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # v4에서 v5로 업데이트
+        uses: actions/setup-python@v5 # 최신 v5 사용
         with:
-          python-version: '3.11' # 안정적인 최신 파이썬 버전
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
