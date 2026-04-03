@@ -27,10 +27,11 @@ jobs:
         run: python main.py
 
       - name: Commit and Push changes
+        - name: Commit and Push changes
         run: |
           git config --global user.name 'Captain-Bot'
           git config --global user.email 'bot@github.com'
-          git add liquidity_db.csv liquidity_chart.png
+          git add .
           git commit -m "Update Liquidity Data: $(date +'%Y-%m-%d')" || exit 0
           git pull --rebase origin main
           git push
