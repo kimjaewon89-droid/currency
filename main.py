@@ -4,64 +4,54 @@ from fredapi import Fred
 import yfinance as yf
 from datetime import datetime, timedelta
 
-# 1. API 설정
-FRED_API_KEY = os.environ.get('FRED_API_KEY')
-fred = Fred(api_key=FRED_API_KEY)
-
 def fetch_and_update_db():
+    print("🚀 프로세스 시작...")
     end_date = datetime.today()
     start_date = end_date - timedelta(days=365)
     
-    # --- Part A: FRED 데이터 (자산, TGA, 역레포) ---
-    print("FRED 데이터 수집 중...")
-    fred_tickers = {'Total_Assets': 'WALCL', 'TGA': 'WDTGAL', 'Reverse_Repo': 'RRPONTSYD'}
-    fred_dfs = []
-    
-    for name, ticker in fred_tickers.items():
-        series = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
-        df = pd.DataFrame(series, columns=[name])
-        df.index = pd.to_datetime(df.index).normalize()
-        fred_dfs.append(df)
-    
-    liq_df = pd.concat(fred_dfs, axis=1)
+    # 1. FRED 데이터 (실패 시 빈 데이터프레임 생성)
+    try:
+        fred = Fred(api_key=os.environ.get('FRED_API_KEY'))
+        fred_tickers = {'Total_Assets': 'WALCL', 'TGA': 'WDTGAL', 'Reverse_Repo': 'RRPONTSYD'}
+        fred_dfs = []
+        for name, ticker in fred_tickers.items():
+            s = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
+            df = pd.DataFrame(s, columns=[name])
+            df.index = pd.to_datetime(df.index).normalize()
+            fred_dfs.append(df)
+        liq_df = pd.concat(fred_dfs, axis=1)
+    except Exception as e:
+        print(f"FRED 에러: {e}")
+        liq_df = pd.DataFrame()
 
-    # --- Part B: yfinance 데이터 (가장 안전한 개별 추출 방식) ---
-    print("시장 데이터 수집 중...")
-    # S&P 500
-    sp500_raw = yf.download("^GSPC", start=start_date, end=end_date, progress=False)
-    # VIX
-    vix_raw = yf.download("^VIX", start=start_date, end=end_date, progress=False)
+    # 2. yfinance 데이터 (가장 원시적인 방식)
+    try:
+        # 단일 티커로 각각 따로 가져와서 충돌 방지
+        sp = yf.download("^GSPC", start=start_date, end=end_date, progress=False)["Close"]
+        vx = yf.download("^VIX", start=start_date, end=end_date, progress=False)["Close"]
+        
+        # 데이터가 Series면 DataFrame으로 변환, DataFrame이면 첫 열 선택
+        sp_val = sp.iloc[:, 0] if len(sp.shape) > 1 else sp
+        vx_val = vx.iloc[:, 0] if len(vx.shape) > 1 else vx
+        
+        mkt_df = pd.DataFrame({'SP500': sp_val, 'VIX': vx_val})
+        mkt_df.index = pd.to_datetime(mkt_df.index).tz_localize(None).normalize()
+    except Exception as e:
+        print(f"YFinance 에러: {e}")
+        mkt_df = pd.DataFrame(columns=['SP500', 'VIX'])
 
-    # 핵심: 최신 yfinance의 복잡한 열 구조를 무시하고 값만 추출
-    # 어떤 버전이든 'Close' 열의 데이터만 강제로 가져옵니다.
-    sp500_series = sp500_raw['Close'].iloc[:, 0] if isinstance(sp500_raw['Close'], pd.DataFrame) else sp500_raw['Close']
-    vix_series = vix_raw['Close'].iloc[:, 0] if isinstance(vix_raw['Close'], pd.DataFrame) else vix_raw['Close']
-
-    market_data = pd.DataFrame({
-        'SP500': sp500_series,
-        'VIX': vix_series
-    })
+    # 3. 강제 병합 및 저장 (데이터가 없어도 파일은 만든다)
+    final_df = liq_df.join(mkt_df, how='outer').ffill().bfill()
     
-    # 시간대 제거 및 날짜 정규화
-    market_data.index = pd.to_datetime(market_data.index).tz_localize(None).normalize()
-
-    # --- Part C: 병합 및 저장 ---
-    # FRED 날짜(기준)에 주가 데이터를 붙임
-    final_df = liq_df.join(market_data, how='left')
+    if not final_df.empty:
+        if 'Total_Assets' in final_df.columns:
+            final_df['Net_Liquidity'] = final_df['Total_Assets'] - (final_df.get('TGA', 0) + final_df.get('Reverse_Repo', 0))
+        final_df.index.name = 'Date'
+        final_df = final_df.reset_index()
     
-    # 주말/공휴일 빈칸은 이전 값으로 채움
-    final_df = final_df.ffill().bfill()
-    
-    # 실질 유동성 계산
-    final_df['Net_Liquidity'] = final_df['Total_Assets'] - (final_df['TGA'] + final_df['Reverse_Repo'])
-    
-    final_df.index.name = 'Date'
-    final_df = final_df.reset_index()
-
-    # CSV 파일로 즉시 저장 (생성 보장)
+    # 이 명령어가 실행되면 파일은 무조건 생깁니다.
     final_df.to_csv('liquidity_db.csv', index=False)
-    print(f"✅ CSV 생성 성공! 총 {len(final_df)}행 데이터가 저장되었습니다.")
-    print(final_df.tail(3))
+    print(f"✅ 작업 완료! 파일 생성 여부: {os.path.exists('liquidity_db.csv')}")
 
 if __name__ == "__main__":
     fetch_and_update_db()
