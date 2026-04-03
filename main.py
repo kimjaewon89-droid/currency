@@ -19,7 +19,7 @@ def fetch_and_update_db():
     }
     
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=30)
+    start_date = end_date - timedelta(days=365)
     
     df_list = []
     for name, ticker in tickers.items():
