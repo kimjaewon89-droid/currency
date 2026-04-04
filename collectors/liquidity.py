@@ -11,53 +11,64 @@ def get_liquidity_data(start_date, end_date):
     from fredapi import Fred
     import yfinance as yf
 
-    print("📊 데이터 수집 엔진 가동 중...")
+    print("📊 [데이터 엔진] FRED 및 Market 데이터 수집 시작...")
+    fred_key = os.environ.get('FRED_API_KEY')
+    fred = Fred(api_key=fred_key)
+
+    # 1. FRED 지표 정의
+    fred_tickers = {
+        'Total_Assets': 'WALCL', 
+        'TGA': 'WDTGAL', 
+        'Reverse_Repo': 'RRPONTSYD',
+        'M2': 'M2SL',
+        'HY_Spread': 'BAMLH0A0HYM2' 
+    }
     
-    # 빈 데이터프레임 미리 생성 (에러 시 반환용)
-    empty_df = pd.DataFrame()
-
-    try:
-        fred_key = os.environ.get('FRED_API_KEY')
-        if not fred_key:
-            print("❌ 에러: FRED_API_KEY가 설정되지 않았습니다.")
-            return empty_df
-
-        fred = Fred(api_key=fred_key)
-        fred_tickers = {
-            'Total_Assets': 'WALCL', 
-            'TGA': 'WDTGAL', 
-            'Reverse_Repo': 'RRPONTSYD',
-            'M2': 'M2SL',
-            'HY_Spread': 'BAMLH0A0HYM2' # 신용 지표 추가
-        }
-        
-        fred_dfs = []
-        for name, ticker in fred_tickers.items():
+    fred_dfs = []
+    for name, ticker in fred_tickers.items():
+        try:
             s = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
             temp_df = pd.DataFrame(s, columns=[name])
             if name == 'M2':
-                temp_df[name] = temp_df[name] * 1000
+                temp_df[name] = temp_df[name] * 1000 # 단위 보정
             temp_df.index = pd.to_datetime(temp_df.index).normalize()
             fred_dfs.append(temp_df)
-        
-        liq_df = pd.concat(fred_dfs, axis=1)
+            print(f"✅ {name} 수집 완료")
+        except Exception as e:
+            print(f"⚠️ {name} 수집 실패: {e}")
 
-        # 시장 데이터 수집
-        mkt_raw = yf.download(["^GSPC", "^VIX"], start=start_date, end=end_date, progress=False)["Close"]
-        
-        # yfinance 데이터 구조 대응 (Multi-index 등)
+    # FRED 데이터 병합 (하나라도 성공했다면 진행)
+    if not fred_dfs:
+        return pd.DataFrame()
+    
+    liq_df = pd.concat(fred_dfs, axis=1)
+
+    # 2. 시장 데이터 수집 (S&P500, VIX)
+    try:
+        mkt_raw = yf.download(["^GSPC", "^VIX"], start=start_date, end=end_date, progress=False)
+        # yfinance 최신 버전의 컬럼 구조 대응
         mkt_df = pd.DataFrame(index=mkt_raw.index)
-        mkt_df['SP500'] = mkt_raw['^GSPC']
-        mkt_df['VIX'] = mkt_raw['^VIX']
+        if ('Close', '^GSPC') in mkt_raw.columns: # Multi-index 대응
+            mkt_df['SP500'] = mkt_raw[('Close', '^GSPC')]
+            mkt_df['VIX'] = mkt_raw[('Close', '^VIX')]
+        else:
+            mkt_df['SP500'] = mkt_raw['Close']['^GSPC'] if 'Close' in mkt_raw.columns else mkt_raw['^GSPC']
+            mkt_df['VIX'] = mkt_raw['Close']['^VIX'] if 'Close' in mkt_raw.columns else mkt_raw['^VIX']
+            
         mkt_df.index = pd.to_datetime(mkt_df.index).tz_localize(None).normalize()
-        
-        # 최종 병합
-        final_combined = liq_df.join(mkt_df, how='outer').ffill().bfill()
-        return final_combined
-
+        print("✅ 시장 데이터(S&P500, VIX) 수집 완료")
     except Exception as e:
-        print(f"❌ 데이터 수집 중 치명적 에러 발생: {e}")
-        return empty_df # None이 아닌 빈 데이터프레임 반환
+        print(f"⚠️ 시장 데이터 수집 실패: {e}")
+        mkt_df = pd.DataFrame()
+
+    # 3. 최종 병합 및 전방/후방 채우기
+    # 데이터가 비어있는 날짜(주말 등)를 ffill로 메워야 차트가 끊기지 않습니다.
+    final_combined = liq_df.join(mkt_df, how='outer').ffill().bfill()
+    
+    # 디버깅: 컬럼이 제대로 들어갔는지 로그 출력
+    print(f"📝 최종 데이터 컬럼 목록: {final_combined.columns.tolist()}")
+    
+    return final_combined
 # --- [2. UI 렌더링 함수: app.py에서 사용] ---
 # --- [상단은 데이터 수집 로직 (기존과 동일)] ---
 import os
