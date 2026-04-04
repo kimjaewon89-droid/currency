@@ -6,42 +6,58 @@ from datetime import datetime, timedelta
 
 # --- [1. 데이터 수집 함수: main.py에서 사용] ---
 def get_liquidity_data(start_date, end_date):
-    print("📊 유동성 데이터 수집 중...")
+    import os
+    import pandas as pd
+    from fredapi import Fred
+    import yfinance as yf
+
+    print("📊 데이터 수집 엔진 가동 중...")
+    
+    # 빈 데이터프레임 미리 생성 (에러 시 반환용)
+    empty_df = pd.DataFrame()
+
     try:
-        fred = Fred(api_key=os.environ.get('FRED_API_KEY'))
-        # M2SL 추가 포함
+        fred_key = os.environ.get('FRED_API_KEY')
+        if not fred_key:
+            print("❌ 에러: FRED_API_KEY가 설정되지 않았습니다.")
+            return empty_df
+
+        fred = Fred(api_key=fred_key)
         fred_tickers = {
             'Total_Assets': 'WALCL', 
             'TGA': 'WDTGAL', 
             'Reverse_Repo': 'RRPONTSYD',
-            'M2': 'M2SL' ,
-            'HY_Spread': 'BAMLH0A0HYM2'  # <--- 신용 위험 지표 추가
+            'M2': 'M2SL',
+            'HY_Spread': 'BAMLH0A0HYM2' # 신용 지표 추가
         }
         
         fred_dfs = []
         for name, ticker in fred_tickers.items():
             s = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
-            df = pd.DataFrame(s, columns=[name])
+            temp_df = pd.DataFrame(s, columns=[name])
             if name == 'M2':
-                df[name] = df[name] * 1000 # 단위 보정
-            df.index = pd.to_datetime(df.index).normalize()
-            fred_dfs.append(df)
+                temp_df[name] = temp_df[name] * 1000
+            temp_df.index = pd.to_datetime(temp_df.index).normalize()
+            fred_dfs.append(temp_df)
+        
         liq_df = pd.concat(fred_dfs, axis=1)
-        
+
         # 시장 데이터 수집
-        sp = yf.download("^GSPC", start=start_date, end=end_date, progress=False)["Close"]
-        vx = yf.download("^VIX", start=start_date, end=end_date, progress=False)["Close"]
+        mkt_raw = yf.download(["^GSPC", "^VIX"], start=start_date, end=end_date, progress=False)["Close"]
         
-        sp_val = sp.iloc[:, 0] if len(sp.shape) > 1 else sp
-        vx_val = vx.iloc[:, 0] if len(vx.shape) > 1 else vx
-        mkt_df = pd.DataFrame({'SP500': sp_val, 'VIX': vx_val})
+        # yfinance 데이터 구조 대응 (Multi-index 등)
+        mkt_df = pd.DataFrame(index=mkt_raw.index)
+        mkt_df['SP500'] = mkt_raw['^GSPC']
+        mkt_df['VIX'] = mkt_raw['^VIX']
         mkt_df.index = pd.to_datetime(mkt_df.index).tz_localize(None).normalize()
         
-        return liq_df.join(mkt_df, how='outer').ffill().bfill()
-    except Exception as e:
-        print(f"❌ 수집 에러: {e}")
-        return pd.DataFrame()
+        # 최종 병합
+        final_combined = liq_df.join(mkt_df, how='outer').ffill().bfill()
+        return final_combined
 
+    except Exception as e:
+        print(f"❌ 데이터 수집 중 치명적 에러 발생: {e}")
+        return empty_df # None이 아닌 빈 데이터프레임 반환
 # --- [2. UI 렌더링 함수: app.py에서 사용] ---
 # --- [상단은 데이터 수집 로직 (기존과 동일)] ---
 import os
