@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def fetch_and_update_db():
     print("🚀 프로세스 시작...")
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=1095) # 3년치로 확장
+    start_date = end_date - timedelta(days=3650) # 3년치로 확장
     
     # yfinance 호출 시 데이터 누락 방지를 위해 interval 설정 확인
     # (일일 데이터이므로 기본값으로 충분하지만, 3년치라면 데이터 양이 꽤 됩니다.)
