@@ -56,7 +56,7 @@ if not df.empty:
     fig.add_trace(
         go.Scatter(x=df_filtered['Date'], y=df_filtered['Net_Liquidity'], 
                    name="Raw Liquidity (Current)", 
-                   line=dict(color='rgba(30, 144, 255, 0.4)', width=2, dash='dot')),
+                   line=dict(color='yellow', width=1, dash='dot')),
         row=1, col=1, secondary_y=False
     )
     
