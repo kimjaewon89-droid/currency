@@ -43,3 +43,26 @@ def render_screen(df):
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True)
+
+def get_liquidity_data(start_date, end_date):
+    fred = Fred(api_key=os.environ.get('FRED_API_KEY'))
+    # M2SL 추가
+    fred_tickers = {
+        'Total_Assets': 'WALCL', 
+        'TGA': 'WDTGAL', 
+        'Reverse_Repo': 'RRPONTSYD',
+        'M2': 'M2SL'  # <--- 신규 추가
+    }
+    
+    fred_dfs = []
+    for name, ticker in fred_tickers.items():
+        s = fred.get_series(ticker, observation_start=start_date, observation_end=end_date)
+        df = pd.DataFrame(s, columns=[name])
+        # M2 단위 보정 (Billions -> Millions)
+        if name == 'M2':
+            df[name] = df[name] * 1000
+        df.index = pd.to_datetime(df.index).normalize()
+        fred_dfs.append(df)
+    
+    combined = pd.concat(fred_dfs, axis=1).join(mkt_df, how='outer').ffill().bfill()
+    return combined
