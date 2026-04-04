@@ -14,7 +14,8 @@ def get_liquidity_data(start_date, end_date):
             'Total_Assets': 'WALCL', 
             'TGA': 'WDTGAL', 
             'Reverse_Repo': 'RRPONTSYD',
-            'M2': 'M2SL' 
+            'M2': 'M2SL' ,
+            'HY_Spread': 'BAMLH0A0HYM2'  # <--- 신용 위험 지표 추가
         }
         
         fred_dfs = []
