@@ -1,0 +1,5 @@
+.env
+liquidity_db.csv
+.venv/
+__pycache__/
+.idea/
