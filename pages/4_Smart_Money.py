@@ -7,13 +7,18 @@ import os
 st.set_page_config(page_title="Smart Money Flow", layout="wide")
 
 # 1. 데이터 로드 및 검증
+# 1. 데이터 로드 및 검증 (수정된 버전)
 @st.cache_data(ttl=3600)
 def load_data():
     if not os.path.exists('liquidity_db.csv'):
         return pd.DataFrame()
     df = pd.read_csv('liquidity_db.csv')
     df['Date'] = pd.to_datetime(df['Date'])
-    return df.sort_values('Date').reset_index(drop=True)
+    
+    # 💡 추가된 안전장치: 빈칸을 이전 값으로 채우고, 
+    # 데이터가 부족하면 0으로라도 채워서 에러를 방지합니다.
+    df = df.sort_values('Date').ffill().fillna(0)
+    return df.reset_index(drop=True)
 
 df = load_data()
 
