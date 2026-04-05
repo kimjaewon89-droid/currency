@@ -1,33 +1,25 @@
-from datetime import datetime, timedelta
-import pandas as pd
-# 분리된 수집기 불러오기 (폴더 구조에 따라 import 경로 조절)
-from collectors.liquidity import get_liquidity_data
+import streamlit as st
+from utils.fetcher import update_database
 
-def run_strategy_update():
-    print("🚀 [전술 업데이트] 데이터 수집 시작...")
-    
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=3650)
-    
-    # 데이터 수집 호출
-    data = get_liquidity_data(start_date, end_date)
-    
-    # 1. 데이터가 None인지 먼저 확인 (방어적 코드)
-    if data is None:
-        print("⚠️ 에러: 수집 엔진으로부터 None이 반환되었습니다.")
-        return
+st.set_page_config(page_title="Captain's Hub", layout="wide")
 
-    # 2. 이제 안전하게 .empty 확인
-    if not data.empty and 'Total_Assets' in data.columns:
-        # Net_Liquidity 계산
-        data['Net_Liquidity'] = data['Total_Assets'] - (data.get('TGA', 0) + data.get('Reverse_Repo', 0))
-        
-        data.index.name = 'Date'
-        data = data.reset_index()
-        data.to_csv('liquidity_db.csv', index=False)
-        print(f"✅ 전술 데이터베이스 업데이트 완료! ({len(data)}행)")
-    else:
-        print("⚠️ 업데이트 실패: 데이터가 비어있거나 필수 지표(Total_Assets)가 누락되었습니다.")
+st.title("🚀 Captain's Strategic Hub")
+st.write("왼쪽 사이드바에서 분석할 전술 화면을 선택하십시오.")
 
-if __name__ == "__main__":
-    run_strategy_update()
+st.divider()
+
+st.subheader("🔄 전술 데이터베이스 관리")
+st.write("아래 버튼을 누르면 연준(FRED) 및 Yahoo Finance에서 최신 데이터를 수집하여 DB를 갱신합니다.")
+
+# Get DB 버튼 로직
+if st.button("📡 최신 데이터 수집 (Get DB)", type="primary"):
+    with st.spinner("데이터 수집 엔진 가동 중..."):
+        try:
+            success = update_database()
+            if success:
+                st.success("✅ 전술 데이터베이스 업데이트 완료! (liquidity_db.csv)")
+                st.cache_data.clear() # 기존에 로드된 데이터 캐시 초기화
+            else:
+                st.error("⚠️ 업데이트 실패: 필수 지표가 누락되었습니다.")
+        except Exception as e:
+            st.error(f"❌ 데이터 수집 중 에러 발생: {e}")
