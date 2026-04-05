@@ -21,9 +21,7 @@ df = load_data()
 required_tickers = ['SPY', 'TLT', 'XLY', 'XLP', 'XLK', 'XLU', 'BRK-B']
 missing = [t for t in required_tickers if t not in df.columns]
 
-if missing:
-    st.error(f"⚠️ 다음 데이터가 누락되었습니다: {', '.join(missing)}\n\nfetcher.py에 종목을 추가하고 [Get DB]를 다시 실행해주세요.")
-    st.stop()
+
 
 st.title("🦅 Smart Money Flow (워런 버핏의 렌즈)")
 
