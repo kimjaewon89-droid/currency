@@ -281,6 +281,7 @@ with st.expander("⚙️ System Admin (DB Management)", expanded=False):
                     from utils.fetcher import update_database
                     success = update_database()
                     if success:
+                        st.cache_data.clear()
                         st.success("✅ DB 업데이트 완료! 화면을 새로고침하여 확인하세요.")
                         st.rerun()
                     else:
