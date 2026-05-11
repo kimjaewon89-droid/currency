@@ -8,3 +8,5 @@ lxml
 streamlit
 python-dotenv
 plotly
+pyTelegramBotAPI
+google-generativeai
