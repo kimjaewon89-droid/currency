@@ -67,16 +67,19 @@ SYSTEM_PROMPT = """당신은 기관급 퀀트 애널리스트입니다.
 
 [출력 형식 — 반드시 아래 구조만 출력, 다른 말 일체 금지]
 BUY 또는 WAIT
-(빈 줄)
-• [핵심지표 사실] → [왜 BUY/WAIT 결론으로 이어지는지 인과설명] (한 줄 50자 이내)
-• [두 번째 근거: 사실 → 인과] (한 줄 50자 이내)
-• [세 번째 근거: 사실 → 인과] (한 줄 50자 이내, 없으면 생략)
 
-[근거 작성 원칙]
-- 반드시 "사실 → 인과 → 결론" 구조: 예) "VIX 급등 후 하락 중 → 공포 절정 신호 → 반등 가능성"
-- 서로 다른 카테고리(레짐/심리/스마트머니/거시) 지표를 조합할 것
-- 숫자 값을 근거에 포함할 것 (예: score=3, VIX=28.5)
-- 불필요한 수식어 금지, 인과 흐름이 핵심
+<긍정적>
+지표 사실 → 인과 해석 (한 줄, 숫자 포함)
+지표 사실 → 인과 해석 (한 줄, 숫자 포함)
+
+<부정적>
+지표 사실 → 인과 해석 (한 줄, 숫자 포함)
+지표 사실 → 인과 해석 (한 줄, 숫자 포함)
+
+[작성 원칙]
+- 긍정적·부정적 각 1~2줄, 없으면 "없음" 한 단어만
+- 숫자 값 반드시 포함 (예: VIX=28.5, score=3)
+- 불필요한 수식어 금지
 """
 
 
@@ -121,18 +124,27 @@ def fetch_and_analyze() -> str:
     raw = call_gemini(signals_json)
 
     # 4. 파싱
-    lines      = [l.strip() for l in raw.splitlines() if l.strip()]
-    verdict    = lines[0].upper() if lines else "WAIT"
-    is_buy     = "BUY" in verdict
-    verdict_line = "✅  BUY" if is_buy else "🚫  WAIT"
-    # 첫 줄(BUY/WAIT)을 제외한 나머지를 근거로 수집 (불릿으로 시작하거나 내용이 있는 줄)
-    reasons = []
-    for l in lines[1:]:
-        upper = l.upper()
-        # 순수하게 BUY 또는 WAIT 만 있는 줄은 건너뜀
-        if upper in ("BUY", "WAIT"):
+    lines = [l.strip() for l in raw.splitlines()]
+    verdict = "WAIT"
+    pos_lines, neg_lines = [], []
+    section = None
+    for l in lines:
+        if not l:
             continue
-        reasons.append(l)
+        upper = l.upper()
+        if upper in ("BUY", "WAIT"):
+            verdict = upper
+        elif "<긍정적>" in l:
+            section = "pos"
+        elif "<부정적>" in l:
+            section = "neg"
+        elif section == "pos":
+            pos_lines.append(l)
+        elif section == "neg":
+            neg_lines.append(l)
+
+    is_buy = verdict == "BUY"
+    verdict_line = "✅  BUY" if is_buy else "🚫  WAIT"
 
     # 5. 메시지 조립
     s          = signals
@@ -147,7 +159,6 @@ def fetch_and_analyze() -> str:
     conflict   = s['convergence']['signal_conflict']
     regime_emoji = {'BULL': '🟢', 'BEAR': '🔴', 'TRANSITION': '🟡'}.get(regime, '⚪')
 
-    # 헤더
     msg = (
         f"📊 *AI 투자 판단* | {date_str}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -155,14 +166,14 @@ def fetch_and_analyze() -> str:
         f"━━━━━━━━━━━━━━━━━━\n"
     )
 
-    # 근거 블록 (Gemini 인과 분석)
-    if reasons:
-        msg += "\n📌 *판단 근거*\n"
-        for r in reasons[:3]:
-            prefix = "" if r.startswith("•") else "• "
-            msg += f"{prefix}{r}\n"
+    msg += "\n🟢 *긍정적*\n"
+    for l in pos_lines[:2]:
+        msg += f"• {l}\n" if not l.startswith("•") else f"{l}\n"
 
-    # 지표 요약
+    msg += "\n🔴 *부정적*\n"
+    for l in neg_lines[:2]:
+        msg += f"• {l}\n" if not l.startswith("•") else f"{l}\n"
+
     msg += (
         f"\n📈 *지표 요약*\n"
         f"• 레짐: {regime_emoji} {regime}  |  통합점수: {score}/4\n"
@@ -170,7 +181,6 @@ def fetch_and_analyze() -> str:
         f"• VIX: {vix_val}  |  경기침체위험: {rec_score}/4\n"
     )
 
-    # 경고 배지
     badges = []
     if has_danger:
         badges.append("⚠️ 위험신호 감지")
