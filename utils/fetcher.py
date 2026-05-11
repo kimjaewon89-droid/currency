@@ -93,8 +93,13 @@ def update_database():
     price_cols = list(yf_mapping.keys())
     macro_cols = list(fred_tickers.keys())
 
-    final_combined[macro_cols] = final_combined[macro_cols].ffill()
-    final_combined[price_cols] = final_combined[price_cols].ffill()
+    # 실제로 수집된 컬럼만 ffill (수집 실패한 컬럼 제외)
+    existing_macro = [c for c in macro_cols if c in final_combined.columns]
+    existing_price = [c for c in price_cols if c in final_combined.columns]
+    if existing_macro:
+        final_combined[existing_macro] = final_combined[existing_macro].ffill()
+    if existing_price:
+        final_combined[existing_price] = final_combined[existing_price].ffill()
 
     # 4. 파생 지표 계산
     if not final_combined.empty and 'Total_Assets' in final_combined.columns:
