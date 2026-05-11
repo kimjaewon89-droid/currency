@@ -121,6 +121,10 @@ def fetch_and_analyze() -> str:
 
     # 3. Gemini 판단
     signals_json = json.dumps(signals, ensure_ascii=False, indent=2)
+    print("\n" + "="*60)
+    print("[Gemini 입력 데이터]")
+    print(signals_json)
+    print("="*60 + "\n")
     raw = call_gemini(signals_json)
 
     # 4. 파싱
@@ -194,7 +198,7 @@ def fetch_and_analyze() -> str:
     return msg
 
 
-@bot.message_handler(func=lambda m: True)
+@bot.message_handler(func=lambda m: m.text and m.text.strip() == "시장요약")
 def handle_message(message):
     chat_id = message.chat.id
     bot.send_message(chat_id, "⏳ 분석 중... (약 20초 소요)")
@@ -204,6 +208,11 @@ def handle_message(message):
     except Exception as e:
         bot.send_message(chat_id, f"❌ 오류 발생:\n{e}")
         raise
+
+
+@bot.message_handler(func=lambda m: True)
+def handle_unknown(message):
+    bot.send_message(message.chat.id, "📌 *시장요약* 을 입력하면 분석을 시작합니다.", parse_mode='Markdown')
 
 
 if __name__ == '__main__':
