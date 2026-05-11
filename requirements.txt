@@ -7,3 +7,4 @@ matplotlib
 lxml
 streamlit
 python-dotenv
+plotly
