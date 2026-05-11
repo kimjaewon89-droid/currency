@@ -3,14 +3,15 @@
 1. "분석 중..." 즉시 회신
 2. FRED+Yahoo 최신 데이터 수집
 3. 모든 지표 계산
-4. Gemini API에 판단 요청
+4. Gemini API에 판단 요청 (가성비 순 자동 선택)
 5. BUY / WAIT + 근거 3줄 회신
 """
 import os
 import json
 import pandas as pd
 import telebot
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -24,11 +25,33 @@ if not TELEGRAM_TOKEN:
 if not GEMINI_API_KEY:
     raise ValueError(".env에 GEMINI_API_KEY가 없습니다.")
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
-genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel('gemini-1.5-flash')
+bot    = telebot.TeleBot(TELEGRAM_TOKEN)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'liquidity_db.csv')
+
+# 가성비 순 우선순위 (앞에 있을수록 빠르고 저렴)
+CANDIDATE_MODELS = [
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.5-pro',
+]
+
+def pick_model() -> str:
+    """사용 가능한 모델 목록에서 가성비 순으로 첫 번째 매칭 반환"""
+    try:
+        available = {m.name.split('/')[-1] for m in client.models.list()}
+        for candidate in CANDIDATE_MODELS:
+            if candidate in available:
+                print(f"[Gemini] 선택된 모델: {candidate}")
+                return candidate
+    except Exception as e:
+        print(f"[Gemini] 모델 목록 조회 실패: {e}")
+    # 조회 실패 시 기본값
+    return CANDIDATE_MODELS[1]
+
+GEMINI_MODEL = pick_model()
 
 SYSTEM_PROMPT = """당신은 기관급 퀀트 애널리스트입니다.
 아래 주식시장 지표 JSON을 분석하여 오늘 S&P500 ETF(SPY)를 매수해야 하는지 판단하세요.
@@ -49,40 +72,54 @@ SYSTEM_PROMPT = """당신은 기관급 퀀트 애널리스트입니다.
 """
 
 
+def call_gemini(signals_json: str) -> str:
+    """가성비 순으로 모델을 시도, 실패 시 다음 모델로 폴백"""
+    prompt = f"{SYSTEM_PROMPT}\n\n지표 데이터:\n{signals_json}"
+
+    for model in CANDIDATE_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=300,
+                )
+            )
+            print(f"[Gemini] 응답 모델: {model}")
+            return response.text.strip()
+        except Exception as e:
+            print(f"[Gemini] {model} 실패: {e} → 다음 모델 시도")
+
+    raise RuntimeError("모든 Gemini 모델 호출 실패")
+
+
 def fetch_and_analyze() -> str:
     """데이터 수집 → 신호 계산 → Gemini 판단 → 포맷된 메시지 반환"""
-    # 1. 최신 데이터 수집
     from utils.fetcher import update_database
     from utils.signals import collect_all_signals
 
+    # 1. 최신 데이터 수집
     update_database()
 
-    # 2. CSV 로드 & 신호 계산
+    # 2. 신호 계산
     df = pd.read_csv(DB_PATH)
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values('Date').reset_index(drop=True)
-
     signals = collect_all_signals(df)
 
-    # 3. Gemini 호출
+    # 3. Gemini 판단
     signals_json = json.dumps(signals, ensure_ascii=False, indent=2)
-    prompt = f"{SYSTEM_PROMPT}\n\n지표 데이터:\n{signals_json}"
-
-    response = gemini.generate_content(prompt)
-    raw = response.text.strip()
+    raw = call_gemini(signals_json)
 
     # 4. 파싱
-    lines = [l.strip() for l in raw.splitlines() if l.strip()]
-    verdict = lines[0].upper() if lines else "WAIT"
-    if "BUY" in verdict:
-        verdict_line = "✅  BUY"
-    else:
-        verdict_line = "❌  WAIT"
+    lines      = [l.strip() for l in raw.splitlines() if l.strip()]
+    verdict    = lines[0].upper() if lines else "WAIT"
+    verdict_line = "✅  BUY" if "BUY" in verdict else "❌  WAIT"
+    reasons    = [l for l in lines[1:] if l and "BUY" not in l.upper()[:4] and "WAIT" not in l.upper()[:4]]
 
-    reasons = [l for l in lines[1:] if l and not l.startswith('BUY') and not l.startswith('WAIT')]
-
-    # 5. 포맷 조립
-    s = signals
+    # 5. 메시지 조립
+    s          = signals
     score      = s['convergence']['score']
     alloc      = s['convergence']['allocation_pct']
     regime     = s['market_regime']['regime']
@@ -90,7 +127,6 @@ def fetch_and_analyze() -> str:
     rec_score  = s['macro']['recession_score']
     vix_val    = s['sentiment']['vix_value']
     date_str   = s['date']
-
     regime_emoji = {'BULL': '🟢', 'BEAR': '🔴', 'TRANSITION': '🟡'}.get(regime, '⚪')
 
     msg = (
@@ -99,12 +135,10 @@ def fetch_and_analyze() -> str:
         f"*{verdict_line}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
     )
-
     if reasons:
         msg += "📌 *근거:*\n"
         for r in reasons[:3]:
-            bullet = r if r.startswith('•') else f"• {r}"
-            msg += f"{bullet}\n"
+            msg += f"{'• ' if not r.startswith('•') else ''}{r}\n"
         msg += "\n"
 
     msg += (
@@ -114,7 +148,6 @@ def fetch_and_analyze() -> str:
         f"• 스마트머니: {sm_score}/4 | VIX: {vix_val}\n"
         f"• 경기침체 위험: {rec_score}/4\n"
     )
-
     if s['convergence']['signal_conflict']:
         msg += "\n⚠️ _신호 충돌 감지 — 신중히 판단하세요_"
 
@@ -124,10 +157,7 @@ def fetch_and_analyze() -> str:
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
     chat_id = message.chat.id
-
-    # 즉시 응답
     bot.send_message(chat_id, "⏳ 분석 중... (약 20초 소요)")
-
     try:
         result = fetch_and_analyze()
         bot.send_message(chat_id, result, parse_mode='Markdown')
@@ -137,5 +167,5 @@ def handle_message(message):
 
 
 if __name__ == '__main__':
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 봇 시작 — 텔레그램 메시지 대기 중...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 봇 시작 — 메시지 대기 중... (모델: {GEMINI_MODEL})")
     bot.infinity_polling(timeout=60, long_polling_timeout=30)
