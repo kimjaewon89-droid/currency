@@ -56,19 +56,27 @@ GEMINI_MODEL = pick_model()
 SYSTEM_PROMPT = """당신은 기관급 퀀트 애널리스트입니다.
 아래 주식시장 지표 JSON을 분석하여 오늘 S&P500 ETF(SPY)를 매수해야 하는지 판단하세요.
 
-출력 규칙 (반드시 준수):
-1번째 줄: BUY 또는 WAIT 중 하나만 (다른 말 금지)
-2번째 줄: 빈 줄
-3번째 줄~: 핵심 근거를 불릿 포인트(•) 3개 이내로 작성, 각 줄 20자 이내로 간결하게
-그 이후: 아무것도 출력하지 않음
+[판단 기준 — 우선순위 순]
+1. recession_score >= 3 → 반드시 WAIT (경기침체 위험 우선)
+2. market_regime=BEAR + smart_money.score <= 2 → 반드시 WAIT
+3. has_danger=true → WAIT (단, convergence.score=4면 부분매수 가능)
+4. convergence.score=4 → 강력 BUY
+5. convergence.score=3 + has_danger=false → BUY
+6. convergence.score<=2 → WAIT
+7. vix_capitulation=true + smart_money.score>=3 → BUY 가중치 부여
 
-판단 기준:
-- convergence.score 4 → 강력 BUY
-- convergence.score 3 + has_danger false → BUY
-- convergence.score 2 이하 or has_danger true → WAIT
-- recession_score 3 이상 → 반드시 WAIT
-- market_regime BEAR + smart_money.score 2 이하 → 반드시 WAIT
-- vix_capitulation true + smart_money.score >= 3 → BUY 가중치
+[출력 형식 — 반드시 아래 구조만 출력, 다른 말 일체 금지]
+BUY 또는 WAIT
+(빈 줄)
+• [핵심지표 사실] → [왜 BUY/WAIT 결론으로 이어지는지 인과설명] (한 줄 50자 이내)
+• [두 번째 근거: 사실 → 인과] (한 줄 50자 이내)
+• [세 번째 근거: 사실 → 인과] (한 줄 50자 이내, 없으면 생략)
+
+[근거 작성 원칙]
+- 반드시 "사실 → 인과 → 결론" 구조: 예) "VIX 급등 후 하락 중 → 공포 절정 신호 → 반등 가능성"
+- 서로 다른 카테고리(레짐/심리/스마트머니/거시) 지표를 조합할 것
+- 숫자 값을 근거에 포함할 것 (예: score=3, VIX=28.5)
+- 불필요한 수식어 금지, 인과 흐름이 핵심
 """
 
 
@@ -115,8 +123,16 @@ def fetch_and_analyze() -> str:
     # 4. 파싱
     lines      = [l.strip() for l in raw.splitlines() if l.strip()]
     verdict    = lines[0].upper() if lines else "WAIT"
-    verdict_line = "✅  BUY" if "BUY" in verdict else "❌  WAIT"
-    reasons    = [l for l in lines[1:] if l and "BUY" not in l.upper()[:4] and "WAIT" not in l.upper()[:4]]
+    is_buy     = "BUY" in verdict
+    verdict_line = "✅  BUY" if is_buy else "🚫  WAIT"
+    # 첫 줄(BUY/WAIT)을 제외한 나머지를 근거로 수집 (불릿으로 시작하거나 내용이 있는 줄)
+    reasons = []
+    for l in lines[1:]:
+        upper = l.upper()
+        # 순수하게 BUY 또는 WAIT 만 있는 줄은 건너뜀
+        if upper in ("BUY", "WAIT"):
+            continue
+        reasons.append(l)
 
     # 5. 메시지 조립
     s          = signals
@@ -127,29 +143,43 @@ def fetch_and_analyze() -> str:
     rec_score  = s['macro']['recession_score']
     vix_val    = s['sentiment']['vix_value']
     date_str   = s['date']
+    has_danger = s['convergence']['has_danger']
+    conflict   = s['convergence']['signal_conflict']
     regime_emoji = {'BULL': '🟢', 'BEAR': '🔴', 'TRANSITION': '🟡'}.get(regime, '⚪')
 
+    # 헤더
     msg = (
         f"📊 *AI 투자 판단* | {date_str}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"*{verdict_line}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
     )
-    if reasons:
-        msg += "📌 *근거:*\n"
-        for r in reasons[:3]:
-            msg += f"{'• ' if not r.startswith('•') else ''}{r}\n"
-        msg += "\n"
 
+    # 근거 블록 (Gemini 인과 분석)
+    if reasons:
+        msg += "\n📌 *판단 근거*\n"
+        for r in reasons[:3]:
+            prefix = "" if r.startswith("•") else "• "
+            msg += f"{prefix}{r}\n"
+
+    # 지표 요약
     msg += (
-        f"📈 *지표 요약*\n"
-        f"• 레짐: {regime_emoji} {regime}\n"
-        f"• 통합점수: {score}/4 | 권장비중: {alloc}%\n"
-        f"• 스마트머니: {sm_score}/4 | VIX: {vix_val}\n"
-        f"• 경기침체 위험: {rec_score}/4\n"
+        f"\n📈 *지표 요약*\n"
+        f"• 레짐: {regime_emoji} {regime}  |  통합점수: {score}/4\n"
+        f"• 권장비중: {alloc}%  |  스마트머니: {sm_score}/4\n"
+        f"• VIX: {vix_val}  |  경기침체위험: {rec_score}/4\n"
     )
-    if s['convergence']['signal_conflict']:
-        msg += "\n⚠️ _신호 충돌 감지 — 신중히 판단하세요_"
+
+    # 경고 배지
+    badges = []
+    if has_danger:
+        badges.append("⚠️ 위험신호 감지")
+    if conflict:
+        badges.append("⚡ 신호 충돌")
+    if rec_score >= 3:
+        badges.append("🔔 침체 경보")
+    if badges:
+        msg += "\n" + "  ".join(badges)
 
     return msg
 
