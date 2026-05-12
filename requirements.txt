@@ -10,3 +10,4 @@ python-dotenv
 plotly
 pyTelegramBotAPI
 google-genai
+pykrx
