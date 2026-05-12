@@ -25,20 +25,17 @@ st.title("🇰🇷 KR Smart Money — 외국인/기관 수급")
 
 # ── 데이터 없을 때 ─────────────────────────────────────────────────────────
 if df.empty or "kospi_foreign_total" not in df.columns:
-    st.warning("수급 데이터가 없습니다. 아래 버튼으로 수집하세요.")
-    if st.button("📡 한국 수급 데이터 수집", type="primary"):
-        with st.spinner("KRX에서 2년치 수급 데이터 수집 중... (1~2분 소요)"):
-            try:
-                from collectors.kr_smart_money import update_kr_smart_money_db
-                ok = update_kr_smart_money_db(save_path=KR_DB_PATH, years=2)
-                if ok:
-                    st.cache_data.clear()
-                    st.success("완료! 새로고침합니다.")
-                    st.rerun()
-                else:
-                    st.error("수집 실패")
-            except Exception as e:
-                st.error(f"오류: {e}")
+    st.info("📋 수급 데이터가 없습니다.")
+    st.markdown("""
+    KRX 수급 데이터는 **로컬 PC에서 수집** 후 사용할 수 있습니다.
+
+    **수집 방법 (로컬 터미널):**
+    ```
+    pip install pykrx
+    py -c "from collectors.kr_smart_money import update_kr_smart_money_db; update_kr_smart_money_db()"
+    ```
+    수집 완료 후 생성된 `kr_smart_money_db.csv`를 GitHub에 push하면 이 페이지에 표시됩니다.
+    """)
     st.stop()
 
 # ── 신호 계산 ──────────────────────────────────────────────────────────────

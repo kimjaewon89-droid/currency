@@ -10,4 +10,4 @@ python-dotenv
 plotly
 pyTelegramBotAPI
 google-genai
-pykrx>=1.0.0
+# pykrx — 로컬 전용 (KRX 스크래핑, Streamlit Cloud 미지원)
