@@ -42,8 +42,12 @@ if df.empty or "kospi_foreign_total" not in df.columns:
     st.stop()
 
 # ── 신호 계산 ──────────────────────────────────────────────────────────────
-from utils.kor_signals import compute_kor_supply_signals
-sig = compute_kor_supply_signals(df)
+try:
+    from utils.kor_signals import compute_kor_supply_signals
+    sig = compute_kor_supply_signals(df)
+except Exception as e:
+    st.error(f"신호 계산 오류: {e}")
+    st.stop()
 
 latest      = df.iloc[-1]
 latest_date = latest["Date"].strftime("%Y-%m-%d")
